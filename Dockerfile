@@ -18,4 +18,4 @@ COPY --from=build /app/target/*.war app.war
 
 EXPOSE 8081
 
-ENTRYPOINT ["java", "-jar", "app.war"]
+ENTRYPOINT ["java", "-Xmx350m", "-Xms128m", "-XX:MaxMetaspaceSize=100m", "-XX:+UseSerialGC", "-jar", "app.war"]
