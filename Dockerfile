@@ -1,21 +1,31 @@
-# Build stage
+# --- Build Stage ---
 FROM maven:3.9.6-eclipse-temurin-17 AS build
 
 WORKDIR /app
 
+# Dependency caching for faster build
 COPY pom.xml .
-COPY src ./src
+RUN mvn dependency:go-offline -B
 
+COPY src ./src
 RUN mvn clean package -DskipTests
 
-
-# Run stage
-FROM eclipse-temurin:17-jre
+# --- Run Stage ---
+FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /app
 
 COPY --from=build /app/target/*.war app.war
 
-EXPOSE 8081
+# Render PORT configuration
+EXPOSE 10000
 
-ENTRYPOINT ["java", "-Xmx220m", "-Xms128m", "-XX:MaxMetaspaceSize=180m", "-XX:+UseSerialGC", "-XX:ReservedCodeCacheSize=32m", "-jar", "app.war"]
+# Optimization flags for Render Free Tier RAM (512MB limit)
+ENTRYPOINT ["java", \
+    "-Xmx256m", \
+    "-Xms128m", \
+    "-XX:MaxMetaspaceSize=160m", \
+    "-XX:+UseSerialGC", \
+    "-Dserver.port=${PORT:-10000}", \
+    "-Dspring.devtools.restart.enabled=false", \
+    "-jar", "app.war"]
