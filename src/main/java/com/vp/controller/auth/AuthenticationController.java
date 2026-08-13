@@ -1,7 +1,6 @@
 package com.vp.controller.auth;
 
 import com.vp.entity.User;
-import jakarta.servlet.http.HttpServletRequest;
 import com.vp.entity.Course;
 import com.vp.entity.Instructor;
 import com.vp.entity.User.Role;
@@ -10,16 +9,19 @@ import com.vp.service.auth.OtpService;
 import com.vp.service.auth.UserService;
 import com.vp.service.instructor.InstructorCourseService;
 import com.vp.service.admin.CourseService;
+
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Controller
@@ -36,7 +38,6 @@ public class AuthenticationController {
 
     // ==================== PAGES ====================
 
-    
     @GetMapping("/reg")
     public String showRegistrationPage() { return "auth/register"; }
 
@@ -48,36 +49,54 @@ public class AuthenticationController {
 
     @GetMapping("/login")
     public String showLoginPage() { return "auth/login"; }
-    
 
     @GetMapping("/courses")
     public String showCoursesPage(HttpServletRequest request) {
         try {
+            // Service layer hi Single SQL Query se sab data Fetch kare (No Loops needed)
             List<Course> allCourses = instructorCourseService.getLiveCourses();
 
-            for (Course course : allCourses) {
-                if (course.getInstructor() == null && course.getInstructorEmail() != null) {
-                    try {
-                        User instructor = userService.findByEmail(course.getInstructorEmail());
-                        course.setInstructor(instructor);
-                    } catch (Exception ignored) {}
-                }
-            }
-
             request.setAttribute("allCourses", allCourses);
-            request.setAttribute("totalCourses", allCourses.size());
-
-            // TODO: wire these to real counts once you have the services for it
-            // e.g. request.setAttribute("totalInstructors", userService.countByRole(Role.INSTRUCTOR));
-            // e.g. request.setAttribute("totalStudents", userService.countByRole(Role.STUDENT));
+            request.setAttribute("totalCourses", allCourses != null ? allCourses.size() : 0);
 
         } catch (Exception e) {
             logger.error("❌ Failed to load courses page", e);
-            request.setAttribute("allCourses", new java.util.ArrayList<Course>());
+            request.setAttribute("allCourses", new ArrayList<Course>());
             request.setAttribute("totalCourses", 0);
         }
-        return "auth/courses"; // WEB-INF/views/auth/courses.jsp
+        return "auth/courses";
     }
+
+    // ==================== HOME ====================
+
+    @GetMapping({"/", "/index"})
+    public String home(HttpServletRequest request) {
+        try {
+            // Service layer se Optimized list fetch karein
+            List<Course> liveCourses = instructorCourseService.getLiveCourses();
+            request.setAttribute("liveCourses", liveCourses);
+        } catch (Exception e) {
+            logger.error("❌ Failed to load home page courses", e);
+            request.setAttribute("liveCourses", new ArrayList<Course>());
+        }
+        return "auth/index";
+    }
+
+    // ==================== COURSE DETAIL ====================
+
+    @GetMapping("/courses/{id}")
+    public String courseDetail(@PathVariable Long id, HttpServletRequest request) {
+        try {
+            Course course = instructorCourseService.getCourseById(id);
+            request.setAttribute("course", course);
+            return "auth/course_detail";
+
+        } catch (RuntimeException e) {
+            logger.warn("Course not found for ID: {}", id);
+            return "redirect:/";
+        }
+    }
+
     // ==================== OTP ====================
 
     @PostMapping("/sendOtp")
@@ -184,7 +203,7 @@ public class AuthenticationController {
         }
     }
 
-    // ==================== LOGIN (checkuser — single method) ====================
+    // ==================== LOGIN ====================
 
     @PostMapping("/checkuser")
     public String checkUser(
@@ -198,7 +217,6 @@ public class AuthenticationController {
             RedirectAttributes redirectAttributes) {
 
         try {
-            // 1. User dhundho
             User user = userService.findByEmail(email);
 
             if (user == null) {
@@ -207,27 +225,23 @@ public class AuthenticationController {
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            // 2. Email verified check
             if (!user.getEmailVerified()) {
                 redirectAttributes.addFlashAttribute("error", "Please verify your email first.");
                 redirectAttributes.addFlashAttribute("email", email);
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            // 3. Active check
             if (!user.getIsActive()) {
                 redirectAttributes.addFlashAttribute("error", "Your account has been deactivated.");
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            // 4. Password check (BCrypt)
             if (!passwordEncoder.matches(password, user.getPassword())) {
                 redirectAttributes.addFlashAttribute("error", "Invalid password.");
                 redirectAttributes.addFlashAttribute("email", email);
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            // 5. Role match check (agar role send ho raha hai form se)
             try {
                 Role expectedRole = Role.valueOf(roleStr.toUpperCase());
                 if (expectedRole != Role.STUDENT && user.getRole() != expectedRole) {
@@ -235,15 +249,10 @@ public class AuthenticationController {
                     redirectAttributes.addFlashAttribute("email", email);
                     return buildLoginRedirect(redirectTo, courseId);
                 }
-            } catch (IllegalArgumentException ignored) {
-                // role invalid ho toh ignore karo — BCrypt match kaafi hai
-            }
+            } catch (IllegalArgumentException ignored) {}
 
-            // 6. Last login update
             try { userService.updateLastLogin(user.getId()); } catch (Exception ignored) {}
 
-            // 7. Session set
-         // 7. Session set
             int sessionTimeout = rememberMe ? 30 * 24 * 60 * 60 : 2 * 60 * 60;
             session.setMaxInactiveInterval(sessionTimeout);
 
@@ -254,7 +263,6 @@ public class AuthenticationController {
             session.setAttribute("userFullName", user.getFullName());
             session.setAttribute("userRole",     user.getRole().name());
 
-            // ── Payment ke liye zaroori ──
             session.setAttribute("fullName", user.getFullName());
             session.setAttribute("email",    user.getEmail());
             session.setAttribute("phone",    user.getPhone() != null ? user.getPhone() : "");
@@ -265,7 +273,6 @@ public class AuthenticationController {
 
             logger.info("✅ Login: {} [{}]", email, user.getRole());
 
-         // 8. BUY NOW se aaya → index page pe bhejo with pending course
             if (("checkout".equals(redirectTo) || "enroll".equals(redirectTo)) 
                     && courseId != null && !courseId.trim().isEmpty()) {
                 try {
@@ -274,7 +281,6 @@ public class AuthenticationController {
                 return "redirect:/";
             }
 
-            // 9. Normal login → role-based redirect
             switch (user.getRole()) {
                 case ADMIN:      return "redirect:/admin/dashboard";
                 case INSTRUCTOR: return "redirect:/instructor/dashboard";
@@ -289,31 +295,8 @@ public class AuthenticationController {
             return buildLoginRedirect(redirectTo, courseId);
         }
     }
-    
- // ==================== COURSE DETAIL ====================
 
-    @GetMapping("/courses/{id}")
-    public String courseDetail(@PathVariable Long id, HttpServletRequest request) {
-        try {
-            Course course = instructorCourseService.getCourseById(id);
-
-            // agar instructor lazy-loaded nahi hai to fill karo (home() jaisa pattern)
-            if (course.getInstructor() == null && course.getInstructorEmail() != null) {
-                try {
-                    User instructor = userService.findByEmail(course.getInstructorEmail());
-                    course.setInstructor(instructor);
-                } catch (Exception ignored) {}
-            }
-
-            request.setAttribute("course", course);
-            return "auth/course_detail"; // WEB-INF/views/auth/course_detail.jsp
-
-        } catch (RuntimeException e) {
-            logger.warn("Course not found for ID: {}", id);
-            return "redirect:/"; // ya koi 404 page bana sakte ho
-        }
-    }
-    // ==================== LOGOUT ====================
+    // ==================== LOGOUT & FORGOT PASSWORD ====================
 
     @GetMapping("/logout")
     public String logout(HttpSession session, RedirectAttributes redirectAttributes) {
@@ -323,8 +306,6 @@ public class AuthenticationController {
         redirectAttributes.addFlashAttribute("success", "You have been logged out successfully.");
         return "redirect:/";
     }
-
-    // ==================== FORGOT PASSWORD ====================
 
     @GetMapping("/forgot-password")
     public String showForgotPasswordPage() { return "auth/forgot-password"; }
@@ -347,7 +328,7 @@ public class AuthenticationController {
     @PostMapping("/auth/forgot-password/verify-otp")
     @ResponseBody
     public String verifyForgotPasswordOtp(@RequestParam("email") String email,
-                                           @RequestParam("otp") String otp) {
+                                          @RequestParam("otp") String otp) {
         try {
             return otpService.verifyOtp(email, otp) ? "SUCCESS" : "INVALID";
         } catch (Exception e) {
@@ -393,27 +374,6 @@ public class AuthenticationController {
             redirectAttributes.addFlashAttribute("email", email);
             return "redirect:/forgot-password";
         }
-    }
-
-    // ==================== HOME ====================
-
-    @GetMapping({"/", "/index"})
-    public String home(HttpServletRequest request) {
-        try {
-            List<Course> liveCourses = instructorCourseService.getLiveCourses();
-            for (Course course : liveCourses) {
-                if (course.getInstructor() == null && course.getInstructorEmail() != null) {
-                    try {
-                        User instructor = userService.findByEmail(course.getInstructorEmail());
-                        course.setInstructor(instructor);
-                    } catch (Exception ignored) {}
-                }
-            }
-            request.setAttribute("liveCourses", liveCourses);
-        } catch (Exception e) {
-            request.setAttribute("liveCourses", new java.util.ArrayList<>());
-        }
-        return "auth/index";
     }
 
     // ==================== HELPERS ====================

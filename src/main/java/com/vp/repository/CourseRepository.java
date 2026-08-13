@@ -14,7 +14,7 @@ import java.util.List;
  */
 @Repository
 public interface CourseRepository extends JpaRepository<Course, Long> {
-    
+
     // ==================== BASIC QUERIES ====================
 	@Query("SELECT c FROM Course c LEFT JOIN FETCH c.instructor WHERE c.status = 'LIVE'")
 	List<Course> findLiveCoursesWithInstructor();
