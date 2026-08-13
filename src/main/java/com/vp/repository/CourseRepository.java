@@ -19,7 +19,8 @@ public interface CourseRepository extends JpaRepository<Course, Long> {
 	@Query("SELECT c FROM Course c LEFT JOIN FETCH c.instructor WHERE c.status = 'LIVE'")
 	List<Course> findLiveCoursesWithInstructor();
 	
-	@Query("SELECT c FROM Course c WHERE c.status IN ('APPROVED', 'LIVE') ORDER BY c.publishDate DESC")
+	// ✅ नया कोड (JOIN FETCH के साथ):
+	@Query("SELECT DISTINCT c FROM Course c LEFT JOIN FETCH c.instructor WHERE c.status IN ('APPROVED', 'LIVE') ORDER BY c.publishDate DESC")
 	List<Course> findPublishedCourses();
     /**
      * Find courses by status
