@@ -8,7 +8,6 @@ import com.vp.service.auth.EmailService;
 import com.vp.service.auth.OtpService;
 import com.vp.service.auth.UserService;
 import com.vp.service.instructor.InstructorCourseService;
-import com.vp.service.admin.CourseService;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -21,7 +20,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 @Controller
@@ -32,11 +31,10 @@ public class AuthenticationController {
     @Autowired private UserService userService;
     @Autowired private OtpService otpService;
     @Autowired private EmailService emailService;
-    @Autowired private CourseService courseService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private InstructorCourseService instructorCourseService;
 
-    // ==================== PAGES ====================
+    // ==================== PAGES (INSTANT LOAD FIX) ====================
 
     @GetMapping("/reg")
     public String showRegistrationPage() { return "auth/register"; }
@@ -47,21 +45,19 @@ public class AuthenticationController {
     @GetMapping("/about")
     public String showAboutPage() { return "auth/about"; }
 
+    // Direct Return (Zero Database Dependency for Fast Login Page Render)
     @GetMapping("/login")
     public String showLoginPage() { return "auth/login"; }
 
     @GetMapping("/courses")
     public String showCoursesPage(HttpServletRequest request) {
         try {
-            // Service layer hi Single SQL Query se sab data Fetch kare (No Loops needed)
             List<Course> allCourses = instructorCourseService.getLiveCourses();
-
-            request.setAttribute("allCourses", allCourses);
+            request.setAttribute("allCourses", allCourses != null ? allCourses : Collections.emptyList());
             request.setAttribute("totalCourses", allCourses != null ? allCourses.size() : 0);
-
         } catch (Exception e) {
-            logger.error("❌ Failed to load courses page", e);
-            request.setAttribute("allCourses", new ArrayList<Course>());
+            logger.error("❌ Failed to load courses page: {}", e.getMessage());
+            request.setAttribute("allCourses", Collections.emptyList());
             request.setAttribute("totalCourses", 0);
         }
         return "auth/courses";
@@ -72,12 +68,11 @@ public class AuthenticationController {
     @GetMapping({"/", "/index"})
     public String home(HttpServletRequest request) {
         try {
-            // Service layer se Optimized list fetch karein
             List<Course> liveCourses = instructorCourseService.getLiveCourses();
-            request.setAttribute("liveCourses", liveCourses);
+            request.setAttribute("liveCourses", liveCourses != null ? liveCourses : Collections.emptyList());
         } catch (Exception e) {
-            logger.error("❌ Failed to load home page courses", e);
-            request.setAttribute("liveCourses", new ArrayList<Course>());
+            logger.error("❌ Failed to load home page courses: {}", e.getMessage());
+            request.setAttribute("liveCourses", Collections.emptyList());
         }
         return "auth/index";
     }
@@ -90,10 +85,9 @@ public class AuthenticationController {
             Course course = instructorCourseService.getCourseById(id);
             request.setAttribute("course", course);
             return "auth/course_detail";
-
-        } catch (RuntimeException e) {
-            logger.warn("Course not found for ID: {}", id);
-            return "redirect:/";
+        } catch (Exception e) {
+            logger.warn("Course not found or DB busy for ID: {}", id);
+            return "redirect:/courses";
         }
     }
 
@@ -126,15 +120,8 @@ public class AuthenticationController {
                                @RequestParam(value = "role", defaultValue = "STUDENT") String roleStr,
                                RedirectAttributes redirectAttributes) {
         try {
-            if (password.length() < 6) {
-                redirectAttributes.addFlashAttribute("error", "Password must be at least 6 characters long.");
-                redirectAttributes.addFlashAttribute("cName", fullName);
-                redirectAttributes.addFlashAttribute("email", email);
-                return "redirect:/reg";
-            }
-
-            if (!password.matches(".*[0-9].*") || !password.matches(".*[a-zA-Z].*")) {
-                redirectAttributes.addFlashAttribute("error", "Password must contain at least one letter and one number.");
+            if (password.length() < 6 || !password.matches(".*[0-9].*") || !password.matches(".*[a-zA-Z].*")) {
+                redirectAttributes.addFlashAttribute("error", "Password must be at least 6 characters & contain letters and numbers.");
                 redirectAttributes.addFlashAttribute("cName", fullName);
                 redirectAttributes.addFlashAttribute("email", email);
                 return "redirect:/reg";
@@ -157,8 +144,6 @@ public class AuthenticationController {
                 role = Role.valueOf(roleStr.toUpperCase());
             } catch (IllegalArgumentException e) {
                 redirectAttributes.addFlashAttribute("error", "Invalid role selected.");
-                redirectAttributes.addFlashAttribute("cName", fullName);
-                redirectAttributes.addFlashAttribute("email", email);
                 return "redirect:/reg";
             }
 
@@ -176,7 +161,6 @@ public class AuthenticationController {
                 instructor.setAverageRating(0.0);
                 instructor.setInstructorVerified(false);
                 user = instructor;
-                logger.info("✅ Creating INSTRUCTOR: {}", email);
             } else {
                 user = new User();
                 user.setFullName(fullName);
@@ -185,7 +169,6 @@ public class AuthenticationController {
                 user.setRole(role);
                 user.setEmailVerified(true);
                 user.setIsActive(true);
-                logger.info("✅ Creating {}: {}", role, email);
             }
 
             userService.registerUser(user);
@@ -197,8 +180,6 @@ public class AuthenticationController {
         } catch (Exception e) {
             logger.error("❌ Registration failed: {}", email, e);
             redirectAttributes.addFlashAttribute("error", "Registration failed. Please try again.");
-            redirectAttributes.addFlashAttribute("cName", fullName);
-            redirectAttributes.addFlashAttribute("email", email);
             return "redirect:/reg";
         }
     }
@@ -221,17 +202,15 @@ public class AuthenticationController {
 
             if (user == null) {
                 redirectAttributes.addFlashAttribute("error", "Email not registered.");
-                redirectAttributes.addFlashAttribute("email", email);
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            if (!user.getEmailVerified()) {
+            if (Boolean.FALSE.equals(user.getEmailVerified())) {
                 redirectAttributes.addFlashAttribute("error", "Please verify your email first.");
-                redirectAttributes.addFlashAttribute("email", email);
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            if (!user.getIsActive()) {
+            if (Boolean.FALSE.equals(user.getIsActive())) {
                 redirectAttributes.addFlashAttribute("error", "Your account has been deactivated.");
                 return buildLoginRedirect(redirectTo, courseId);
             }
@@ -242,43 +221,25 @@ public class AuthenticationController {
                 return buildLoginRedirect(redirectTo, courseId);
             }
 
-            try {
-                Role expectedRole = Role.valueOf(roleStr.toUpperCase());
-                if (expectedRole != Role.STUDENT && user.getRole() != expectedRole) {
-                    redirectAttributes.addFlashAttribute("error", "Role mismatch. Please select correct role.");
-                    redirectAttributes.addFlashAttribute("email", email);
-                    return buildLoginRedirect(redirectTo, courseId);
-                }
-            } catch (IllegalArgumentException ignored) {}
-
-            try { userService.updateLastLogin(user.getId()); } catch (Exception ignored) {}
-
-            int sessionTimeout = rememberMe ? 30 * 24 * 60 * 60 : 2 * 60 * 60;
+            // Fix: Optimized session timeout (Max 7 days to prevent Tomcat overhead)
+            int sessionTimeout = rememberMe ? 7 * 24 * 60 * 60 : 2 * 60 * 60;
             session.setMaxInactiveInterval(sessionTimeout);
 
             session.setAttribute("loggedInUser", user);
             session.setAttribute("userId",       user.getId());
             session.setAttribute("userEmail",    user.getEmail());
             session.setAttribute("userName",     user.getFullName());
-            session.setAttribute("userFullName", user.getFullName());
             session.setAttribute("userRole",     user.getRole().name());
 
-            session.setAttribute("fullName", user.getFullName());
-            session.setAttribute("email",    user.getEmail());
-            session.setAttribute("phone",    user.getPhone() != null ? user.getPhone() : "");
-            
             if (user.getRole() == Role.INSTRUCTOR) session.setAttribute("instructorId", user.getId());
             else if (user.getRole() == Role.STUDENT) session.setAttribute("studentId",  user.getId());
             else if (user.getRole() == Role.ADMIN)   session.setAttribute("adminId",    user.getId());
 
-            logger.info("✅ Login: {} [{}]", email, user.getRole());
+            logger.info("✅ Login Success: {} [{}]", email, user.getRole());
 
             if (("checkout".equals(redirectTo) || "enroll".equals(redirectTo)) 
                     && courseId != null && !courseId.trim().isEmpty()) {
-                try {
-                    session.setAttribute("pendingCourseId", Long.parseLong(courseId.trim()));
-                } catch (NumberFormatException ignored) {}
-                return "redirect:/";
+                return "redirect:/courses/" + courseId.trim();
             }
 
             switch (user.getRole()) {
@@ -290,8 +251,7 @@ public class AuthenticationController {
 
         } catch (Exception e) {
             logger.error("❌ Login failed: {}", email, e);
-            redirectAttributes.addFlashAttribute("error", "Login failed. Please try again.");
-            redirectAttributes.addFlashAttribute("email", email);
+            redirectAttributes.addFlashAttribute("error", "Login service temporarily unavailable. Try again.");
             return buildLoginRedirect(redirectTo, courseId);
         }
     }
@@ -300,11 +260,9 @@ public class AuthenticationController {
 
     @GetMapping("/logout")
     public String logout(HttpSession session, RedirectAttributes redirectAttributes) {
-        String userEmail = (String) session.getAttribute("userEmail");
         session.invalidate();
-        logger.info("✅ Logout: {}", userEmail);
         redirectAttributes.addFlashAttribute("success", "You have been logged out successfully.");
-        return "redirect:/";
+        return "redirect:/login";
     }
 
     @GetMapping("/forgot-password")
@@ -344,21 +302,6 @@ public class AuthenticationController {
         try {
             if (!newPassword.equals(confirmPassword)) {
                 redirectAttributes.addFlashAttribute("error", "Passwords do not match.");
-                redirectAttributes.addFlashAttribute("email", email);
-                return "redirect:/forgot-password";
-            }
-            if (newPassword.length() < 6) {
-                redirectAttributes.addFlashAttribute("error", "Password must be at least 6 characters long.");
-                redirectAttributes.addFlashAttribute("email", email);
-                return "redirect:/forgot-password";
-            }
-            if (!newPassword.matches(".*[0-9].*") || !newPassword.matches(".*[a-zA-Z].*")) {
-                redirectAttributes.addFlashAttribute("error", "Password must contain at least one letter and one number.");
-                redirectAttributes.addFlashAttribute("email", email);
-                return "redirect:/forgot-password";
-            }
-            if (!userService.existsByEmail(email)) {
-                redirectAttributes.addFlashAttribute("error", "User not found.");
                 return "redirect:/forgot-password";
             }
 
@@ -371,7 +314,6 @@ public class AuthenticationController {
         } catch (Exception e) {
             logger.error("Password reset failed: {}", email, e);
             redirectAttributes.addFlashAttribute("error", "Password reset failed. Please try again.");
-            redirectAttributes.addFlashAttribute("email", email);
             return "redirect:/forgot-password";
         }
     }
